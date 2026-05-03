@@ -8,11 +8,13 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.session.SessionRegistry;
-import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.session.HttpSessionEventPublisher;
+import org.springframework.session.FindByIndexNameSessionRepository;
+import org.springframework.session.Session;
+import org.springframework.session.security.SpringSessionBackedSessionRegistry;
 import com.acme.clipcascade.service.BruteForceProtectionService;
 import com.acme.clipcascade.service.FacadeUserService;
 
@@ -37,10 +39,15 @@ public class SecurityConfiguration {
 		this.facadeUserService = facadeUserService;
 	}
 
-	// SessionRegistry bean to store session information
+	// duohub fork：使用 Spring Session 持久化的 SessionRegistry。
+	// 上游用的 SessionRegistryImpl 是内存 Map，容器重启即清空所有 session，
+	// 全部客户端被迫 logout + 重输密码。这里改成 SpringSessionBackedSessionRegistry，
+	// 底层用 spring-session-jdbc 把 session 写到 H2 的 SPRING_SESSION 表，
+	// 重启后所有 cookie 仍然有效。
 	@Bean
-	public SessionRegistry sessionRegistry() {
-		return new SessionRegistryImpl();
+	public SessionRegistry sessionRegistry(
+			FindByIndexNameSessionRepository<? extends Session> sessionRepository) {
+		return new SpringSessionBackedSessionRegistry<>(sessionRepository);
 	}
 
 	// Ensures the SessionRegistry is notified of session lifecycle events
@@ -50,7 +57,9 @@ public class SecurityConfiguration {
 	}
 
 	@Bean
-	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+	public SecurityFilterChain securityFilterChain(
+			HttpSecurity http,
+			SessionRegistry sessionRegistry) throws Exception {
 		return http
 				.authorizeHttpRequests((authorize) -> authorize
 						.requestMatchers(
@@ -78,7 +87,7 @@ public class SecurityConfiguration {
 				.sessionManagement(session -> session
 						.sessionCreationPolicy(SessionCreationPolicy.ALWAYS) // Always create a new session
 						.maximumSessions(-1) // Allow unlimited sessions
-						.sessionRegistry(sessionRegistry()) // Use the session registry
+						.sessionRegistry(sessionRegistry) // duohub fork：注入持久化 SessionRegistry
 						.expiredSessionStrategy(new CustomExpiredSession())) // Custom expired session strategy
 				.build();
 	}
