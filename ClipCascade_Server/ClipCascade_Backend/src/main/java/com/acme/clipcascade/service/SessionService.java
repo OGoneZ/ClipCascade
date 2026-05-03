@@ -1,26 +1,35 @@
 package com.acme.clipcascade.service;
 
-import java.util.List;
+import java.util.Map;
 
-import org.springframework.security.core.session.SessionInformation;
-import org.springframework.security.core.session.SessionRegistry;
+import org.springframework.session.FindByIndexNameSessionRepository;
+import org.springframework.session.Session;
 import org.springframework.stereotype.Service;
 
-import org.springframework.security.core.userdetails.UserDetails;
 import com.acme.clipcascade.utils.UserValidator;
 
 import jakarta.persistence.EntityNotFoundException;
 
 @Service
 public class SessionService {
-    private final SessionRegistry sessionRegistry;
+
+    // duohub fork：原实现走 SessionRegistry.getAllPrincipals()，但
+    // SpringSessionBackedSessionRegistry 在 spring-session-core 里直接抛
+    // UnsupportedOperationException（"Spring Session provides no way to obtain that information"）。
+    // 任何 changeUsername/changePassword/Logoff All/admin 删用户的链路都会 500。
+    //
+    // 改成直接通过 FindByIndexNameSessionRepository.findByPrincipalName(username)
+    // 拿到该用户名所有 session（PRINCIPAL_NAME 是 SPRING_SESSION 表的索引列），然后
+    // sessionRepository.deleteById 删除。语义跟原 expireNow 一致——客户端 cookie 失效。
+
+    private final FindByIndexNameSessionRepository<? extends Session> sessionRepository;
     private final UserService userService;
 
     public SessionService(
-            SessionRegistry sessionRegistry,
+            FindByIndexNameSessionRepository<? extends Session> sessionRepository,
             UserService userService) {
 
-        this.sessionRegistry = sessionRegistry;
+        this.sessionRepository = sessionRepository;
         this.userService = userService;
     }
 
@@ -35,26 +44,16 @@ public class SessionService {
             throw new EntityNotFoundException("User not found");
         }
 
-        // Iterate over all principals in the SessionRegistry
-        List<Object> principals = sessionRegistry.getAllPrincipals();
-        boolean foundUser = false;
+        // 直接按 principal name 拿 session（spring-session 的 indexed query）
+        Map<String, ? extends Session> sessions = sessionRepository.findByPrincipalName(username);
 
-        for (Object principal : principals) {
-            if (principal instanceof UserDetails userDetails) { // <- Spring Security UserDetails
-                if (userDetails.getUsername().equals(username)) {
-                    foundUser = true;
-                    // Get all active sessions for this principal
-                    List<SessionInformation> sessions = sessionRegistry.getAllSessions(principal, false);
-                    // Expire each session to effectively force logout
-                    for (SessionInformation sessionInfo : sessions) {
-                        sessionInfo.expireNow(); // mark it as expired
-                    }
-                }
-            }
+        if (sessions.isEmpty()) {
+            return "No active sessions found for username: " + username;
         }
 
-        if (!foundUser) {
-            return "No active sessions found for username: " + username;
+        // 删除每个 session 即让对应 cookie 失效
+        for (String sessionId : sessions.keySet()) {
+            sessionRepository.deleteById(sessionId);
         }
 
         return "User '" + username + "' has been logged out of all active sessions.";
