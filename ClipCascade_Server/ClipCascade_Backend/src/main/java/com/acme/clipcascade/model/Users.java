@@ -1,5 +1,7 @@
 package com.acme.clipcascade.model;
 
+import java.io.Serializable;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -8,7 +10,11 @@ import jakarta.validation.constraints.NotNull;
 
 @Entity
 @Table(name = "users")
-public class Users {
+public class Users implements Serializable {
+
+    // duohub fork：UserPrincipal 持有 Users 实例，UserPrincipal 已实现 Serializable
+    // 用于持久化 session。Users 也必须 implements Serializable 才能被序列化。
+    private static final long serialVersionUID = 1L;
 
     @Id
     @NotNull(message = "Username is required") // Validation constraint at application level
