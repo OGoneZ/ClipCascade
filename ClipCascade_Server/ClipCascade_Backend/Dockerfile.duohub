@@ -4,17 +4,18 @@
 #
 # 上游 Dockerfile 同步时不会冲突（独立文件）。GitHub Actions / docker compose
 # 都通过显式 -f Dockerfile.duohub 引用此文件。
+#
+# 一步 build 不分 dependency:go-offline + package：因为 ehcache transitive
+# 链上有老版 jaxb-api 只在 HTTP-only java.net 仓库，go-offline 会去解析它失败；
+# 实际 mvn package 只解析真正用到的 deps，不会踩这条死链。layer cache 仍然
+# 按 RUN 命令的输入（pom.xml + src/）哈希命中。
 
 # ─── build stage ─────────────────────────────────────────────
 FROM maven:3.9-eclipse-temurin-21 AS build
 
 WORKDIR /src
 
-# 先拷 pom 拉依赖，layer cache 命中时下次只重 build 源码
 COPY pom.xml .
-RUN mvn -B -e -ntp dependency:go-offline
-
-# 再拷源码 build
 COPY src ./src
 RUN mvn -B -e -ntp package -DskipTests
 
